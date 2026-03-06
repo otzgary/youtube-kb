@@ -166,6 +166,77 @@ def page_video(video_id):
 # API 接口
 # ============================================================
 
+def _extract_video(video_id):
+    """核心提取逻辑，返回 dict 或抛异常"""
+    import yt_dlp
+    opts = {"quiet": True, "no_warnings": True, "skip_download": True}
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+
+    title = info.get("title", "未知标题")
+    date = info.get("upload_date", "")
+    webpage_url = info.get("webpage_url", f"https://www.youtube.com/watch?v={video_id}")
+    thumbnail = info.get("thumbnail", "")
+    view_count = info.get("view_count", 0)
+    like_count = info.get("like_count", 0)
+
+    from youtube_transcript_api import YouTubeTranscriptApi
+    api = YouTubeTranscriptApi()
+
+    transcript = None
+    lang_used = None
+    try:
+        transcript_list = api.list(video_id)
+        for lang in LANG_PRIORITY:
+            try:
+                transcript = transcript_list.find_transcript([lang]).fetch()
+                lang_used = lang
+                break
+            except Exception:
+                continue
+        if not transcript:
+            for lang in LANG_PRIORITY:
+                try:
+                    transcript = transcript_list.find_generated_transcript([lang]).fetch()
+                    lang_used = lang
+                    break
+                except Exception:
+                    continue
+    except Exception:
+        transcript = api.fetch(video_id)
+        lang_used = "default"
+
+    if not transcript:
+        raise ValueError("未找到字幕")
+
+    raw = transcript.to_raw_data()
+    lines = [entry["text"].replace("\n", " ") for entry in raw if entry.get("text")]
+    seen = set()
+    unique_lines = []
+    for line in lines:
+        if line not in seen:
+            seen.add(line)
+            unique_lines.append(line)
+
+    subtitle_text = merge_into_paragraphs(unique_lines)
+
+    result = {
+        "status": "success",
+        "video_id": video_id,
+        "title": title,
+        "date": date,
+        "url": webpage_url,
+        "thumbnail": thumbnail,
+        "view_count": view_count,
+        "like_count": like_count,
+        "lang": lang_used,
+        "subtitle_text": subtitle_text,
+    }
+
+    db_save_video(result)
+    return result
+
+
 @app.route("/api/extract")
 def api_extract():
     """提取单个视频字幕并自动入库"""
@@ -181,76 +252,10 @@ def api_extract():
         return jsonify({"status": "error", "message": "缺少 video_id 或 url 参数"}), 400
 
     try:
-        import yt_dlp
-        opts = {"quiet": True, "no_warnings": True, "skip_download": True}
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
-
-        title = info.get("title", "未知标题")
-        date = info.get("upload_date", "")
-        webpage_url = info.get("webpage_url", f"https://www.youtube.com/watch?v={video_id}")
-        thumbnail = info.get("thumbnail", "")
-        view_count = info.get("view_count", 0)
-        like_count = info.get("like_count", 0)
-
-        from youtube_transcript_api import YouTubeTranscriptApi
-        api = YouTubeTranscriptApi()
-
-        transcript = None
-        lang_used = None
-        try:
-            transcript_list = api.list(video_id)
-            for lang in LANG_PRIORITY:
-                try:
-                    transcript = transcript_list.find_transcript([lang]).fetch()
-                    lang_used = lang
-                    break
-                except Exception:
-                    continue
-            if not transcript:
-                for lang in LANG_PRIORITY:
-                    try:
-                        transcript = transcript_list.find_generated_transcript([lang]).fetch()
-                        lang_used = lang
-                        break
-                    except Exception:
-                        continue
-        except Exception:
-            transcript = api.fetch(video_id)
-            lang_used = "default"
-
-        if not transcript:
-            return jsonify({"status": "error", "message": "未找到字幕"}), 404
-
-        raw = transcript.to_raw_data()
-        lines = [entry["text"].replace("\n", " ") for entry in raw if entry.get("text")]
-        seen = set()
-        unique_lines = []
-        for line in lines:
-            if line not in seen:
-                seen.add(line)
-                unique_lines.append(line)
-
-        subtitle_text = merge_into_paragraphs(unique_lines)
-
-        result = {
-            "status": "success",
-            "video_id": video_id,
-            "title": title,
-            "date": date,
-            "url": webpage_url,
-            "thumbnail": thumbnail,
-            "view_count": view_count,
-            "like_count": like_count,
-            "lang": lang_used,
-            "subtitle_text": subtitle_text,
-        }
-
-        # 自动入库
-        db_save_video(result)
-
+        result = _extract_video(video_id)
         return jsonify(result)
-
+    except ValueError as e:
+        return jsonify({"status": "error", "message": str(e)}), 404
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)[:300]}), 500
 
@@ -310,13 +315,7 @@ def api_batch():
                 success += 1
                 continue
             try:
-                # 内部调用提取逻辑
-                import urllib.request as ur
-                port = request.host.split(":")[-1] if ":" in request.host else "443"
-                scheme = request.scheme
-                extract_url = f"{scheme}://{request.host}/api/extract?video_id={vid}"
-                req = ur.Request(extract_url)
-                resp = ur.urlopen(req, timeout=60)
+                _extract_video(vid)
                 success += 1
             except Exception:
                 failed.append(vid)
