@@ -1,3 +1,5 @@
 yt-dlp
 flask
+markupsafe
 youtube-transcript-api
+gunicorn

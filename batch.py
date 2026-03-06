@@ -13,6 +13,9 @@ API_BASE = "https://youtube-kb-production-45f3.up.railway.app"
 
 def get_channel_videos(channel_url):
     """获取频道的所有视频 ID 列表"""
+    # 确保 URL 指向视频列表页
+    if "/videos" not in channel_url and "/playlist" not in channel_url:
+        channel_url = channel_url.rstrip("/") + "/videos"
     api_url = f"{API_BASE}/channel?url={urllib.parse.quote(channel_url)}"
 
     print(f"正在获取频道视频列表...")
