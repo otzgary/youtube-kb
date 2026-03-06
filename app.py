@@ -463,6 +463,25 @@ def _run_batch_task(task_id, channel_url):
         task["log"].append(f"出错: {str(e)[:200]}")
 
 
+def db_update_content(video_id, new_content):
+    """更新视频文稿内容"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("UPDATE videos SET content = ? WHERE id = ?", (new_content, video_id))
+    conn.commit()
+    conn.close()
+
+
+def db_all_videos():
+    """获取所有视频"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT id, title, content FROM videos ORDER BY date DESC"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 def db_stats():
     """获取数据库统计"""
     conn = sqlite3.connect(DB_PATH)
@@ -525,6 +544,64 @@ def admin_task_status(task_id):
         "log": task["log"][since:],
         "log_offset": len(task["log"]),
     })
+
+
+def _run_reclean_task(task_id):
+    """后台线程：重新清洗所有已入库视频"""
+    task = _tasks[task_id]
+    try:
+        videos = db_all_videos()
+        task["total"] = len(videos)
+        task["channel"] = "重新清洗"
+        task["status"] = "running"
+        task["log"].append(f"共 {len(videos)} 个视频待清洗")
+
+        for i, v in enumerate(videos, 1):
+            try:
+                cleaned = _clean_transcript(v["content"], v["title"])
+                db_update_content(v["id"], cleaned)
+                task["success"] += 1
+                task["log"].append(f"[{i}/{len(videos)}] 成功: {v['title'][:40]}")
+            except Exception as e:
+                task["failed"] += 1
+                task["failed_ids"].append(v["id"])
+                task["log"].append(f"[{i}/{len(videos)}] 失败: {v['id']} - {str(e)[:100]}")
+
+        task["status"] = "done"
+        task["log"].append(f"完成！成功 {task['success']}，失败 {task['failed']}")
+
+    except Exception as e:
+        task["status"] = "error"
+        task["log"].append(f"出错: {str(e)[:200]}")
+
+
+@app.route("/admin/reclean", methods=["POST"])
+def admin_reclean():
+    """重新清洗所有已入库视频的文稿"""
+    global _task_counter
+    if not ANTHROPIC_API_KEY:
+        return jsonify({"status": "error", "message": "未配置 ANTHROPIC_API_KEY"}), 400
+
+    with _task_lock:
+        _task_counter += 1
+        task_id = str(_task_counter)
+
+    _tasks[task_id] = {
+        "status": "starting",
+        "channel": "重新清洗",
+        "url": "",
+        "total": 0,
+        "success": 0,
+        "failed": 0,
+        "failed_ids": [],
+        "log": ["开始重新清洗所有文稿..."],
+        "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+    t = threading.Thread(target=_run_reclean_task, args=(task_id,), daemon=True)
+    t.start()
+
+    return jsonify({"status": "ok", "task_id": task_id})
 
 
 @app.route("/admin/videos")

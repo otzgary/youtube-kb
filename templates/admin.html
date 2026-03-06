@@ -517,6 +517,11 @@
       </div>
     </div>
 
+    <div style="margin-bottom: 30px">
+      <button id="reclean-btn" onclick="startReclean()" style="padding:10px 24px; font-size:14px; border:1px solid #f44336; border-radius:8px; background:transparent; color:#f44336; cursor:pointer; font-weight:500;">重新清洗所有文稿</button>
+      <span style="font-size:13px; color:#666; margin-left:12px">用 AI 重新处理所有已入库视频的文稿（分段、标点、简体化）</span>
+    </div>
+
     <div class="new-task">
       <h2>添加内容</h2>
       <div class="mode-tabs">
@@ -773,6 +778,30 @@
         .finally(() => {
           btn.disabled = false;
           btn.textContent = '提取字幕';
+        });
+    }
+
+    // 重新清洗
+    function startReclean() {
+      if (!confirm('确定要重新清洗所有已入库视频的文稿吗？')) return;
+      const btn = document.getElementById('reclean-btn');
+      btn.disabled = true;
+      btn.textContent = '提交中...';
+
+      fetch('/admin/reclean', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+          if (data.status === 'ok') {
+            addTaskCard(data.task_id);
+            pollTask(data.task_id);
+          } else {
+            alert(data.message || '提交失败');
+          }
+        })
+        .catch(e => alert('网络错误: ' + e))
+        .finally(() => {
+          btn.disabled = false;
+          btn.textContent = '重新清洗所有文稿';
         });
     }
 
