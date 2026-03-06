@@ -257,7 +257,9 @@ def api_extract():
     except ValueError as e:
         return jsonify({"status": "error", "message": str(e)}), 404
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)[:300]}), 500
+        msg = str(e)[:300]
+        code = 404 if "transcript" in msg.lower() or "subtitle" in msg.lower() else 500
+        return jsonify({"status": "error", "message": msg}), code
 
 
 @app.route("/api/channel")
