@@ -16,9 +16,15 @@ app = Flask(__name__)
 
 # 配置
 LANG_PRIORITY = ["zh-Hans", "zh-Hant", "zh", "en"]
-LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
-LLM_API_BASE = os.environ.get("LLM_API_BASE", "")
-LLM_MODEL = os.environ.get("LLM_MODEL", "claude-haiku-4-5-20251001")
+
+
+def get_llm_config():
+    """动态读取 LLM 配置"""
+    return {
+        "api_key": os.environ.get("LLM_API_KEY", ""),
+        "api_base": os.environ.get("LLM_API_BASE", ""),
+        "model": os.environ.get("LLM_MODEL", "claude-haiku-4-5-20251001"),
+    }
 DB_PATH = Path(__file__).parent / "kb.db"
 
 
@@ -174,11 +180,12 @@ def page_video(video_id):
 
 def _clean_transcript(raw_text, title=""):
     """用 LLM 清洗原始字幕文本"""
-    if not LLM_API_KEY or not LLM_API_BASE:
+    cfg = get_llm_config()
+    if not cfg["api_key"] or not cfg["api_base"]:
         return raw_text
 
     from openai import OpenAI
-    client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_API_BASE)
+    client = OpenAI(api_key=cfg["api_key"], base_url=cfg["api_base"])
 
     prompt = f"""你是一个专业的文稿编辑。下面是一段从 YouTube 视频自动生成的字幕原文，存在以下问题：
 - 没有标点符号或标点错误
@@ -202,7 +209,7 @@ def _clean_transcript(raw_text, title=""):
 请直接输出清洗后的文稿，不要加任何说明或前缀。"""
 
     resp = client.chat.completions.create(
-        model=LLM_MODEL,
+        model=cfg["model"],
         max_tokens=8000,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -508,8 +515,9 @@ def admin_debug_env():
 @app.route("/admin")
 def page_admin():
     stats = db_stats()
-    stats["llm_configured"] = bool(LLM_API_KEY and LLM_API_BASE)
-    stats["llm_model"] = LLM_MODEL
+    cfg = get_llm_config()
+    stats["llm_configured"] = bool(cfg["api_key"] and cfg["api_base"])
+    stats["llm_model"] = cfg["model"]
     return render_template("admin.html", tasks=_tasks, stats=stats)
 
 
@@ -596,7 +604,8 @@ def _run_reclean_task(task_id):
 def admin_reclean():
     """重新清洗所有已入库视频的文稿"""
     global _task_counter
-    if not LLM_API_KEY or not LLM_API_BASE:
+    cfg = get_llm_config()
+    if not cfg["api_key"] or not cfg["api_base"]:
         return jsonify({"status": "error", "message": "未配置 LLM_API_KEY 或 LLM_API_BASE"}), 400
 
     with _task_lock:
