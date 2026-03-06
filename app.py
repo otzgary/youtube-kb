@@ -1,5 +1,5 @@
 """YouTube 知识库 — Railway 全栈服务
-API + 搜索界面 + 数据库 一体化
+API + 搜索界面 + 数据库 + AI 清洗 一体化
 """
 
 import os
@@ -495,6 +495,8 @@ def db_stats():
 @app.route("/admin")
 def page_admin():
     stats = db_stats()
+    stats["llm_configured"] = bool(LLM_API_KEY and LLM_API_BASE)
+    stats["llm_model"] = LLM_MODEL
     return render_template("admin.html", tasks=_tasks, stats=stats)
 
 
