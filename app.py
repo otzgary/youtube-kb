@@ -124,6 +124,10 @@ def channel_videos():
     if not url:
         return jsonify({"status": "error", "message": "缺少 url 参数"}), 400
 
+    # 确保 URL 指向视频列表页
+    if "/videos" not in url and "/playlist" not in url:
+        url = url.rstrip("/") + "/videos"
+
     try:
         import yt_dlp
         opts = {
