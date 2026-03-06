@@ -502,13 +502,12 @@ def db_stats():
 @app.route("/admin/debug-env")
 def admin_debug_env():
     """临时调试：检查环境变量（上线后删除）"""
+    all_keys = sorted(os.environ.keys())
     return jsonify({
         "LLM_API_KEY_set": bool(os.environ.get("LLM_API_KEY")),
-        "LLM_API_BASE_set": bool(os.environ.get("LLM_API_BASE")),
-        "LLM_MODEL": os.environ.get("LLM_MODEL", ""),
-        "LLM_API_KEY_len": len(os.environ.get("LLM_API_KEY", "")),
         "LLM_API_BASE_val": os.environ.get("LLM_API_BASE", "")[:30],
-        "all_llm_keys": [k for k in os.environ if "LLM" in k or "API" in k.upper()],
+        "total_env_vars": len(all_keys),
+        "all_keys": all_keys,
     })
 
 
