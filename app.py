@@ -16,6 +16,7 @@ app = Flask(__name__)
 
 # 配置
 LANG_PRIORITY = ["zh-Hans", "zh-Hant", "zh", "en"]
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 DB_PATH = Path(__file__).parent / "kb.db"
 
 
@@ -169,6 +170,43 @@ def page_video(video_id):
 # API 接口
 # ============================================================
 
+def _clean_transcript(raw_text, title=""):
+    """用 Claude 清洗原始字幕文本"""
+    if not ANTHROPIC_API_KEY:
+        return raw_text
+
+    import anthropic
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+    prompt = f"""你是一个专业的文稿编辑。下面是一段从 YouTube 视频自动生成的字幕原文，存在以下问题：
+- 没有标点符号或标点错误
+- 没有合理的分段
+- 可能混有繁体字
+- 有重复或无意义的片段（如 "[音乐]"）
+- 句子断裂不完整
+
+请你清洗这段文稿：
+1. 添加正确的标点符号，划分完整的句子
+2. 按语义合理分段（每段 3-6 句话）
+3. 全部转为简体中文
+4. 删除无意义的标记（如 [音乐]、[掌声] 等）
+5. 不要改变原文的意思，不要添加内容，不要总结
+
+视频标题：{title}
+
+原始字幕：
+{raw_text}
+
+请直接输出清洗后的文稿，不要加任何说明或前缀。"""
+
+    msg = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=8000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return msg.content[0].text
+
+
 def _extract_video(video_id):
     """核心提取逻辑，返回 dict 或抛异常"""
     import yt_dlp
@@ -221,7 +259,8 @@ def _extract_video(video_id):
             seen.add(line)
             unique_lines.append(line)
 
-    subtitle_text = merge_into_paragraphs(unique_lines)
+    raw_text = merge_into_paragraphs(unique_lines)
+    subtitle_text = _clean_transcript(raw_text, title)
 
     result = {
         "status": "success",
