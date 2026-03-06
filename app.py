@@ -44,6 +44,9 @@ def extract():
         title = info.get("title", "未知标题")
         date = info.get("upload_date", "")
         webpage_url = info.get("webpage_url", f"https://www.youtube.com/watch?v={video_id}")
+        thumbnail = info.get("thumbnail", "")
+        view_count = info.get("view_count", 0)
+        like_count = info.get("like_count", 0)
 
         # 获取字幕
         from youtube_transcript_api import YouTubeTranscriptApi
@@ -99,6 +102,9 @@ def extract():
             "title": title,
             "date": date,
             "url": webpage_url,
+            "thumbnail": thumbnail,
+            "view_count": view_count,
+            "like_count": like_count,
             "lang": lang_used,
             "subtitle_text": subtitle_text,
         })
