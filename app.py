@@ -4,7 +4,10 @@ API + 搜索界面 + 数据库 一体化
 
 import os
 import re
+import json
 import sqlite3
+import threading
+import time
 from pathlib import Path
 from markupsafe import escape
 from flask import Flask, jsonify, request, render_template, abort, Response
@@ -357,6 +360,135 @@ def api_extract_compat():
 def api_channel_compat():
     """兼容旧路径"""
     return api_channel()
+
+
+# ============================================================
+# 后台管理
+# ============================================================
+
+# 任务状态存储（内存中，重启后清空）
+_tasks = {}  # task_id -> {status, channel, total, success, failed, failed_ids, log, started_at}
+_task_counter = 0
+_task_lock = threading.Lock()
+
+
+def _run_batch_task(task_id, channel_url):
+    """后台线程：批量提取频道视频"""
+    task = _tasks[task_id]
+    try:
+        import yt_dlp
+        opts = {"quiet": True, "no_warnings": True, "extract_flat": True, "skip_download": True}
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(channel_url, download=False)
+
+        channel = info.get("channel", info.get("title", "未知频道"))
+        entries = info.get("entries", [])
+        video_ids = [e["id"] for e in entries if e and e.get("id")]
+
+        task["channel"] = channel
+        task["total"] = len(video_ids)
+        task["status"] = "running"
+        task["log"].append(f"频道: {channel}，共 {len(video_ids)} 个视频")
+
+        for i, vid in enumerate(video_ids, 1):
+            existing = db_get_video(vid)
+            if existing:
+                task["success"] += 1
+                task["log"].append(f"[{i}/{len(video_ids)}] 跳过（已存在）: {vid}")
+                continue
+            try:
+                result = _extract_video(vid)
+                task["success"] += 1
+                title = result.get("title", vid)
+                task["log"].append(f"[{i}/{len(video_ids)}] 成功: {title}")
+            except Exception as e:
+                task["failed"] += 1
+                task["failed_ids"].append(vid)
+                task["log"].append(f"[{i}/{len(video_ids)}] 失败: {vid} - {str(e)[:100]}")
+
+        task["status"] = "done"
+        task["log"].append(f"完成！成功 {task['success']}，失败 {task['failed']}，共 {task['total']}")
+
+    except Exception as e:
+        task["status"] = "error"
+        task["log"].append(f"出错: {str(e)[:200]}")
+
+
+def db_stats():
+    """获取数据库统计"""
+    conn = sqlite3.connect(DB_PATH)
+    total = conn.execute("SELECT COUNT(*) FROM videos").fetchone()[0]
+    conn.close()
+    return {"total_videos": total}
+
+
+@app.route("/admin")
+def page_admin():
+    stats = db_stats()
+    return render_template("admin.html", tasks=_tasks, stats=stats)
+
+
+@app.route("/admin/start", methods=["POST"])
+def admin_start_task():
+    global _task_counter
+    url = request.form.get("url", "").strip()
+    if not url:
+        return jsonify({"status": "error", "message": "请输入频道 URL"}), 400
+
+    if "/videos" not in url and "/playlist" not in url:
+        url = url.rstrip("/") + "/videos"
+
+    with _task_lock:
+        _task_counter += 1
+        task_id = str(_task_counter)
+
+    _tasks[task_id] = {
+        "status": "starting",
+        "channel": "",
+        "url": url,
+        "total": 0,
+        "success": 0,
+        "failed": 0,
+        "failed_ids": [],
+        "log": [f"正在获取频道信息: {url}"],
+        "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+    t = threading.Thread(target=_run_batch_task, args=(task_id, url), daemon=True)
+    t.start()
+
+    return jsonify({"status": "ok", "task_id": task_id})
+
+
+@app.route("/admin/task/<task_id>")
+def admin_task_status(task_id):
+    task = _tasks.get(task_id)
+    if not task:
+        return jsonify({"status": "error", "message": "任务不存在"}), 404
+    # 返回最新的 log 行（客户端可以用 since 参数只获取新行）
+    since = int(request.args.get("since", 0))
+    return jsonify({
+        "status": task["status"],
+        "channel": task["channel"],
+        "total": task["total"],
+        "success": task["success"],
+        "failed": task["failed"],
+        "log": task["log"][since:],
+        "log_offset": len(task["log"]),
+    })
+
+
+@app.route("/admin/videos")
+def admin_videos():
+    """列出所有已入库视频"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT id, title, date, url, thumbnail, view_count, like_count "
+        "FROM videos ORDER BY date DESC"
+    ).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
 
 
 # ============================================================
