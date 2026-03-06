@@ -7,7 +7,7 @@ import re
 import sqlite3
 from pathlib import Path
 from markupsafe import escape
-from flask import Flask, jsonify, request, render_template, abort
+from flask import Flask, jsonify, request, render_template, abort, Response
 
 app = Flask(__name__)
 
@@ -288,7 +288,8 @@ def api_channel():
 
 @app.route("/api/batch")
 def api_batch():
-    """批量提取频道所有视频字幕（同步执行）"""
+    """批量提取频道所有视频字幕（流式响应，逐条输出进度）"""
+    import json as _json
     url = request.args.get("url") or ""
     if not url:
         return jsonify({"status": "error", "message": "缺少 url 参数"}), 400
@@ -296,41 +297,48 @@ def api_batch():
     if "/videos" not in url and "/playlist" not in url:
         url = url.rstrip("/") + "/videos"
 
-    try:
-        import yt_dlp
-        opts = {"quiet": True, "no_warnings": True, "extract_flat": True, "skip_download": True}
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+    def generate():
+        try:
+            import yt_dlp
+            opts = {"quiet": True, "no_warnings": True, "extract_flat": True, "skip_download": True}
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
 
-        channel = info.get("channel", info.get("title", "未知频道"))
-        entries = info.get("entries", [])
-        video_ids = [e["id"] for e in entries if e and e.get("id")]
+            channel = info.get("channel", info.get("title", "未知频道"))
+            entries = info.get("entries", [])
+            video_ids = [e["id"] for e in entries if e and e.get("id")]
 
-        # 逐个提取（跳过已存在的）
-        success = 0
-        failed = []
-        for vid in video_ids:
-            existing = db_get_video(vid)
-            if existing:
-                success += 1
-                continue
-            try:
-                _extract_video(vid)
-                success += 1
-            except Exception:
-                failed.append(vid)
+            yield _json.dumps({"event": "start", "channel": channel, "total": len(video_ids)}) + "\n"
 
-        return jsonify({
-            "status": "success",
-            "channel": channel,
-            "total": len(video_ids),
-            "success": success,
-            "failed": len(failed),
-            "failed_ids": failed,
-        })
+            success = 0
+            failed = []
+            for i, vid in enumerate(video_ids, 1):
+                existing = db_get_video(vid)
+                if existing:
+                    success += 1
+                    yield _json.dumps({"event": "skip", "video_id": vid, "progress": f"{i}/{len(video_ids)}"}) + "\n"
+                    continue
+                try:
+                    _extract_video(vid)
+                    success += 1
+                    yield _json.dumps({"event": "ok", "video_id": vid, "progress": f"{i}/{len(video_ids)}"}) + "\n"
+                except Exception as e:
+                    failed.append(vid)
+                    yield _json.dumps({"event": "fail", "video_id": vid, "error": str(e)[:200], "progress": f"{i}/{len(video_ids)}"}) + "\n"
 
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)[:300]}), 500
+            yield _json.dumps({
+                "event": "done",
+                "channel": channel,
+                "total": len(video_ids),
+                "success": success,
+                "failed": len(failed),
+                "failed_ids": failed,
+            }) + "\n"
+
+        except Exception as e:
+            yield _json.dumps({"event": "error", "message": str(e)[:300]}) + "\n"
+
+    return Response(generate(), mimetype="application/x-ndjson")
 
 
 # ============================================================
