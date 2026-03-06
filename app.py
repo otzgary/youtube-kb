@@ -16,7 +16,9 @@ app = Flask(__name__)
 
 # 配置
 LANG_PRIORITY = ["zh-Hans", "zh-Hant", "zh", "en"]
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
+LLM_API_BASE = os.environ.get("LLM_API_BASE", "")
+LLM_MODEL = os.environ.get("LLM_MODEL", "claude-haiku-4-5-20251001")
 DB_PATH = Path(__file__).parent / "kb.db"
 
 
@@ -171,12 +173,12 @@ def page_video(video_id):
 # ============================================================
 
 def _clean_transcript(raw_text, title=""):
-    """用 Claude 清洗原始字幕文本"""
-    if not ANTHROPIC_API_KEY:
+    """用 LLM 清洗原始字幕文本"""
+    if not LLM_API_KEY or not LLM_API_BASE:
         return raw_text
 
-    import anthropic
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    from openai import OpenAI
+    client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_API_BASE)
 
     prompt = f"""你是一个专业的文稿编辑。下面是一段从 YouTube 视频自动生成的字幕原文，存在以下问题：
 - 没有标点符号或标点错误
@@ -199,12 +201,12 @@ def _clean_transcript(raw_text, title=""):
 
 请直接输出清洗后的文稿，不要加任何说明或前缀。"""
 
-    msg = client.messages.create(
-        model="claude-haiku-4-5-20251001",
+    resp = client.chat.completions.create(
+        model=LLM_MODEL,
         max_tokens=8000,
         messages=[{"role": "user", "content": prompt}],
     )
-    return msg.content[0].text
+    return resp.choices[0].message.content
 
 
 def _extract_video(video_id):
@@ -579,8 +581,8 @@ def _run_reclean_task(task_id):
 def admin_reclean():
     """重新清洗所有已入库视频的文稿"""
     global _task_counter
-    if not ANTHROPIC_API_KEY:
-        return jsonify({"status": "error", "message": "未配置 ANTHROPIC_API_KEY"}), 400
+    if not LLM_API_KEY or not LLM_API_BASE:
+        return jsonify({"status": "error", "message": "未配置 LLM_API_KEY 或 LLM_API_BASE"}), 400
 
     with _task_lock:
         _task_counter += 1

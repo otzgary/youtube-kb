@@ -3,4 +3,4 @@ flask
 markupsafe
 youtube-transcript-api
 gunicorn
-anthropic
+openai
