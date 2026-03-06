@@ -342,12 +342,152 @@
       font-size: 15px;
     }
 
+    /* 搜索区域 */
+    .search-section {
+      margin-bottom: 30px;
+    }
+
+    .search-box {
+      display: flex;
+      gap: 8px;
+    }
+
+    .search-box input {
+      flex: 1;
+      padding: 12px 20px;
+      font-size: 16px;
+      border: 1px solid #303030;
+      border-radius: 24px;
+      background: #121212;
+      color: #f1f1f1;
+      outline: none;
+    }
+
+    .search-box input:focus {
+      border-color: #3ea6ff;
+    }
+
+    .search-box button {
+      padding: 12px 24px;
+      font-size: 16px;
+      border: none;
+      border-radius: 24px;
+      background: #3ea6ff;
+      color: #0f0f0f;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .search-box button:hover {
+      background: #65b8ff;
+    }
+
+    .search-results {
+      margin-top: 20px;
+    }
+
+    .search-result-card {
+      display: flex;
+      gap: 16px;
+      padding: 14px 0;
+      border-bottom: 1px solid #272727;
+    }
+
+    .search-result-card:last-child {
+      border-bottom: none;
+    }
+
+    .search-result-thumb {
+      flex-shrink: 0;
+      width: 180px;
+      height: 101px;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #272727;
+    }
+
+    .search-result-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .search-result-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .search-result-title {
+      font-size: 15px;
+      font-weight: 500;
+      margin-bottom: 4px;
+      line-height: 1.4;
+    }
+
+    .search-result-title a {
+      color: #f1f1f1;
+      text-decoration: none;
+    }
+
+    .search-result-title a:hover {
+      color: #3ea6ff;
+    }
+
+    .search-result-meta {
+      font-size: 12px;
+      color: #aaa;
+      margin-bottom: 8px;
+    }
+
+    .search-result-snippet {
+      font-size: 13px;
+      line-height: 1.5;
+      color: #ccc;
+    }
+
+    .search-result-snippet mark {
+      background: rgba(62, 166, 255, 0.25);
+      color: #3ea6ff;
+      padding: 1px 3px;
+      border-radius: 2px;
+    }
+
+    .search-result-actions {
+      margin-top: 8px;
+    }
+
+    .search-result-actions a {
+      font-size: 13px;
+      color: #3ea6ff;
+      text-decoration: none;
+      margin-right: 12px;
+    }
+
+    .search-result-actions a:hover {
+      text-decoration: underline;
+    }
+
+    .search-empty {
+      text-align: center;
+      color: #666;
+      padding: 30px;
+      font-size: 14px;
+    }
+
+    .search-count {
+      color: #aaa;
+      font-size: 13px;
+      margin-bottom: 12px;
+    }
+
     @media (max-width: 640px) {
       .video-table th:nth-child(1),
       .video-table td:nth-child(1) { display: none; }
       .video-table th:nth-child(4),
       .video-table td:nth-child(4) { display: none; }
       .stats { flex-direction: column; }
+      .search-result-card { flex-direction: column; }
+      .search-result-thumb { width: 100%; height: auto; aspect-ratio: 16/9; }
     }
   </style>
 </head>
@@ -356,6 +496,14 @@
     <div class="top-bar">
       <h1>后台管理</h1>
       <a href="/">返回搜索</a>
+    </div>
+
+    <div class="search-section">
+      <div class="search-box">
+        <input type="text" id="search-input" placeholder="搜索视频字幕内容..." />
+        <button onclick="doSearch()">搜索</button>
+      </div>
+      <div class="search-results" id="search-results" style="display:none"></div>
     </div>
 
     <div class="stats">
@@ -628,7 +776,47 @@
         });
     }
 
+    // 搜索
+    function doSearch() {
+      const q = document.getElementById('search-input').value.trim();
+      const container = document.getElementById('search-results');
+      if (!q) {
+        container.style.display = 'none';
+        return;
+      }
+
+      fetch('/api/search?q=' + encodeURIComponent(q))
+        .then(r => r.json())
+        .then(data => {
+          container.style.display = 'block';
+          if (data.length === 0) {
+            container.innerHTML = '<div class="search-empty">没有找到相关内容</div>';
+            return;
+          }
+          container.innerHTML = `<div class="search-count">找到 ${data.length} 条结果</div>` +
+            data.map(r => `
+              <div class="search-result-card">
+                <div class="search-result-thumb">
+                  ${r.thumbnail ? `<a href="${r.url}" target="_blank"><img src="${r.thumbnail}" alt=""></a>` : ''}
+                </div>
+                <div class="search-result-info">
+                  <div class="search-result-title"><a href="${r.url}" target="_blank">${escapeHtml(r.title)}</a></div>
+                  <div class="search-result-meta">${formatDate(r.date)} &middot; ${formatViews(r.view_count)} 次观看 &middot; ${formatViews(r.like_count)} 点赞</div>
+                  <div class="search-result-snippet">${r.snippet}</div>
+                  <div class="search-result-actions">
+                    <a href="/video/${r.id}?q=${encodeURIComponent(q)}">查看完整文稿</a>
+                    <a href="${r.url}" target="_blank">YouTube 原链接</a>
+                  </div>
+                </div>
+              </div>
+            `).join('');
+        });
+    }
+
     // Enter 键提交
+    document.getElementById('search-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter') doSearch();
+    });
     document.getElementById('channel-url').addEventListener('keydown', e => {
       if (e.key === 'Enter') startTask();
     });

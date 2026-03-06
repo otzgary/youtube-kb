@@ -346,6 +346,16 @@ def api_batch():
     return Response(generate(), mimetype="application/x-ndjson")
 
 
+@app.route("/api/search")
+def api_search():
+    """搜索 API，返回 JSON"""
+    q = request.args.get("q", "").strip()
+    if not q:
+        return jsonify([])
+    results = db_search(q)
+    return jsonify(results)
+
+
 # ============================================================
 # 兼容旧 API 路径（本地 extract.py/batch.py 还在用）
 # ============================================================
